@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dijkstra SPF Visualiser — 25CS044</title>
+  <meta name="description" content="Interactive Dijkstra link-state SPF routing visualiser for university project 25CS044. Animate shortest-path computation on a 5-node network and observe how routes change when link costs are adjusted." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ══════════════ HEADER ══════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <div class="logo-chip">SPF</div>
+    <div>
+      <h1 class="app-title">Dijkstra Link-State Visualiser</h1>
+      <p class="app-subtitle">25CS044 · Network Shortest-Path Analysis</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div id="verificationBadge" class="badge badge--pending" title="Built-in self-test status">⏳ Verifying…</div>
+    <button class="btn btn--ghost btn--sm" id="btnImportCfg" title="Import JSON config">⬆ Import</button>
+    <button class="btn btn--ghost btn--sm" id="btnExportCfg" title="Export JSON config">⬇ Export</button>
+    <input type="file" id="fileImportCfg" accept=".json" style="display:none" />
+  </div>
+</header>
+
+<!-- ══════════════ CONTROLS BAR ══════════════ -->
+<div class="controls-bar">
+  <div class="controls-group">
+    <label class="ctrl-label" for="sourceSelect">Source</label>
+    <select id="sourceSelect" class="ctrl-select">
+      <option value="A">A</option>
+      <option value="B">B</option>
+      <option value="C">C</option>
+      <option value="D">D</option>
+      <option value="E">E</option>
+    </select>
+  </div>
+  <div class="controls-divider"></div>
+  <button class="btn btn--primary" id="btnPlay" title="Play / Pause animation (Space)">&#9654; Play</button>
+  <button class="btn btn--secondary" id="btnPrev" title="Previous step" disabled>&#9664; Prev</button>
+  <button class="btn btn--secondary" id="btnNext" title="Next step">Next &#9654;</button>
+  <button class="btn btn--danger" id="btnReset" title="Reset (R)">&#8635; Reset</button>
+  <div class="controls-divider"></div>
+  <label class="ctrl-label" for="speedSlider">Speed</label>
+  <input type="range" id="speedSlider" min="1" max="10" value="5" class="slider" />
+  <span class="ctrl-value" id="speedLabel">5x</span>
+  <div class="controls-divider"></div>
+  <div class="step-counter">Step <span id="stepNum">0</span> / <span id="stepTotal">—</span></div>
+</div>
+
+<!-- ══════════════ MAIN LAYOUT ══════════════ -->
+<main class="main-layout">
+
+  <!-- LEFT COLUMN: network canvas + legend -->
+  <section class="col-left">
+    <div class="panel panel--canvas">
+      <div class="panel-header">
+        <span class="panel-title">Network Graph</span>
+        <div class="canvas-actions">
+          <button class="btn btn--ghost btn--xs" id="btnEditEdges">&#9998; Edit Edges</button>
+          <button class="btn btn--ghost btn--xs" id="btnExportSVG">&#128444; SVG</button>
+        </div>
+      </div>
+      <div class="svg-wrap" id="svgWrap">
+        <svg id="networkSVG" viewBox="0 0 560 400" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="panel panel--legend">
+      <div class="panel-header"><span class="panel-title">Legend</span></div>
+      <div class="legend-grid">
+        <span class="legend-dot" style="background:var(--clr-node-default)"></span><span>Unvisited node</span>
+        <span class="legend-dot" style="background:var(--clr-node-settled)"></span><span>Settled (finalised)</span>
+        <span class="legend-dot" style="background:var(--clr-node-current)"></span><span>Current (extracting)</span>
+        <span class="legend-dot" style="background:var(--clr-node-source)"></span><span>Source node</span>
+        <span class="legend-line" style="background:var(--clr-edge-default)"></span><span>Unvisited edge</span>
+        <span class="legend-line" style="background:var(--clr-edge-tree)"></span><span>SPF tree edge</span>
+        <span class="legend-line" style="background:var(--clr-edge-relax-good)"></span><span>Relaxed (improved)</span>
+        <span class="legend-line" style="background:var(--clr-edge-relax-bad)"></span><span>Relaxed (no improve)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT COLUMN: tables + log -->
+  <section class="col-right">
+
+    <!-- Distance & Predecessor Tables -->
+    <div class="panel panel--tables">
+      <div class="panel-header">
+        <span class="panel-title">Algorithm State</span>
+        <div class="tab-bar">
+          <button class="tab-btn tab-btn--active" data-tab="tabDist">Distance</button>
+          <button class="tab-btn" data-tab="tabPred">Predecessor</button>
+          <button class="tab-btn" data-tab="tabQueue">Priority Queue</button>
+          <button class="tab-btn" data-tab="tabSettled">Settled Set</button>
+        </div>
+      </div>
+      <div class="tab-content" id="tabDist">
+        <table class="data-table" id="distTable">
+          <thead><tr><th>Node</th><th>Distance</th><th>Changed?</th></tr></thead>
+          <tbody id="distTableBody"></tbody>
+        </table>
+      </div>
+      <div class="tab-content hidden" id="tabPred">
+        <table class="data-table" id="predTable">
+          <thead><tr><th>Node</th><th>Predecessor</th></tr></thead>
+          <tbody id="predTableBody"></tbody>
+        </table>
+      </div>
+      <div class="tab-content hidden" id="tabQueue">
+        <table class="data-table" id="queueTable">
+          <thead><tr><th>Priority</th><th>Node</th></tr></thead>
+          <tbody id="queueTableBody"></tbody>
+        </table>
+      </div>
+      <div class="tab-content hidden" id="tabSettled">
+        <div class="settled-chips" id="settledChips"></div>
+      </div>
+    </div>
+
+    <!-- Log panel -->
+    <div class="panel panel--log">
+      <div class="panel-header">
+        <span class="panel-title">Step Log</span>
+        <button class="btn btn--ghost btn--xs" id="btnClearLog">Clear</button>
+      </div>
+      <div class="log-scroll" id="logScroll">
+        <div class="log-hint">Run the algorithm to see step-by-step explanations here.</div>
+      </div>
+    </div>
+
+    <!-- Final routing table -->
+    <div class="panel panel--routing">
+      <div class="panel-header">
+        <span class="panel-title">Final Routing Table</span>
+        <div class="panel-actions">
+          <span class="metrics-badge" id="metricsBase">—</span>
+          <button class="btn btn--ghost btn--xs" id="btnExportRoutingCSV">&#8595; CSV</button>
+          <button class="btn btn--ghost btn--xs" id="btnExportRoutingJSON">&#8595; JSON</button>
+        </div>
+      </div>
+      <table class="data-table" id="routingTable">
+        <thead><tr><th>Destination</th><th>Total Cost</th><th>Path</th><th>Next Hop</th></tr></thead>
+        <tbody id="routingTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- ══════════════ EDGE EDITOR MODAL ══════════════ -->
+<div class="modal-overlay hidden" id="edgeEditorModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">Edit Edge Costs</h2>
+      <button class="modal-close" id="btnCloseEdgeEditor">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <table class="data-table" id="edgeEditTable">
+        <thead><tr><th>Edge</th><th>Cost</th><th></th></tr></thead>
+        <tbody id="edgeEditBody"></tbody>
+      </table>
+      <div class="modal-footer">
+        <button class="btn btn--ghost btn--sm" id="btnAddEdge">+ Add Edge</button>
+        <button class="btn btn--primary btn--sm" id="btnApplyEdges">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ EXPERIMENT SECTION ══════════════ -->
+<section class="experiment-section">
+  <div class="section-header">
+    <div class="section-title-group">
+      <h2 class="section-title">&#128300; Experiment Panel — Link Cost Change</h2>
+      <p class="section-subtitle">Select an edge, increase its cost, re-run SPF and compare routes.</p>
+    </div>
+    <div class="experiment-controls">
+      <label class="ctrl-label">Edge</label>
+      <select id="expEdgeSelect" class="ctrl-select"></select>
+      <label class="ctrl-label">New Cost</label>
+      <input type="number" id="expNewCost" class="ctrl-input" min="1" value="6" />
+      <button class="btn btn--primary" id="btnRunExperiment">Run Experiment</button>
+    </div>
+  </div>
+
+  <div class="experiment-body hidden" id="experimentBody">
+    <!-- Side-by-side networks -->
+    <div class="compare-networks">
+      <div class="compare-net-card">
+        <div class="compare-net-label">Before</div>
+        <svg id="svgBefore" viewBox="0 0 560 400" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="compare-arrow">&#8594;</div>
+      <div class="compare-net-card">
+        <div class="compare-net-label">After</div>
+        <svg id="svgAfter" viewBox="0 0 560 400" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+
+    <!-- Before/After tables -->
+    <div class="compare-tables">
+      <div class="compare-table-card">
+        <h3 class="compare-table-title">Before Routing Table</h3>
+        <table class="data-table" id="beforeRoutingTable">
+          <thead><tr><th>Dest</th><th>Cost</th><th>Path</th><th>Next Hop</th></tr></thead>
+          <tbody id="beforeRoutingBody"></tbody>
+        </table>
+        <div class="metrics-row" id="metricsBeforeExp"></div>
+      </div>
+      <div class="compare-table-card">
+        <h3 class="compare-table-title">After Routing Table</h3>
+        <table class="data-table" id="afterRoutingTable">
+          <thead><tr><th>Dest</th><th>Cost</th><th>Path</th><th>Next Hop</th></tr></thead>
+          <tbody id="afterRoutingBody"></tbody>
+        </table>
+        <div class="metrics-row" id="metricsAfterExp"></div>
+      </div>
+    </div>
+
+    <!-- Change summary -->
+    <div class="change-summary" id="changeSummary"></div>
+
+    <!-- Export experiment -->
+    <div class="experiment-exports">
+      <button class="btn btn--ghost btn--sm" id="btnExportExpCSV">&#8595; Export CSV</button>
+      <button class="btn btn--ghost btn--sm" id="btnExportExpJSON">&#8595; Export JSON</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ SWEEP CHART SECTION ══════════════ -->
+<section class="sweep-section">
+  <div class="section-header">
+    <div class="section-title-group">
+      <h2 class="section-title">&#128202; Cost Sweep Analysis</h2>
+      <p class="section-subtitle">Vary the selected edge cost from 1–10 and observe path-cost changes.</p>
+    </div>
+    <div class="sweep-controls">
+      <label class="ctrl-label">Edge</label>
+      <select id="sweepEdgeSelect" class="ctrl-select"></select>
+      <label class="ctrl-label">Range</label>
+      <input type="number" id="sweepMin" class="ctrl-input ctrl-input--sm" value="1" min="1" />
+      <span class="ctrl-label">to</span>
+      <input type="number" id="sweepMax" class="ctrl-input ctrl-input--sm" value="10" min="2" />
+      <button class="btn btn--primary" id="btnRunSweep">Run Sweep</button>
+      <button class="btn btn--ghost btn--sm" id="btnExportChartPNG">&#128444; PNG</button>
+    </div>
+  </div>
+
+  <div class="sweep-body hidden" id="sweepBody">
+    <div class="chart-container">
+      <canvas id="sweepChart"></canvas>
+    </div>
+    <div class="sweep-table-wrap">
+      <table class="data-table" id="sweepTable">
+        <thead id="sweepTableHead"></thead>
+        <tbody id="sweepTableBody"></tbody>
+      </table>
+    </div>
+    <div class="sweep-exports">
+      <button class="btn btn--ghost btn--sm" id="btnExportSweepCSV">&#8595; Sweep CSV</button>
+      <button class="btn btn--ghost btn--sm" id="btnExportSweepJSON">&#8595; Sweep JSON</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ README SECTION ══════════════ -->
+<section class="readme-section">
+  <details class="readme-details">
+    <summary class="readme-summary">&#128218; How to Use &amp; Algorithm Notes</summary>
+    <div class="readme-body">
+      <h3>Running the Project</h3>
+      <p>Open <code>index.html</code> in any modern browser — no server or build step required.</p>
+
+      <h3>Algorithm Steps → UI Mapping</h3>
+      <ol>
+        <li><strong>Initialise:</strong> Source gets dist=0, all others dist=∞. Priority queue seeded with source.</li>
+        <li><strong>Extract-Min:</strong> Node with smallest distance is "settled" — highlighted in amber. Marked in Settled Set tab.</li>
+        <li><strong>Relax Edges:</strong> Each neighbour is checked. If <code>dist[u] + w(u,v) &lt; dist[v]</code> then dist[v] and pred[v] are updated (green flash). Otherwise the edge is grey.</li>
+        <li><strong>Repeat:</strong> Until queue is empty. Each iteration = one "step" in the UI.</li>
+        <li><strong>Tie-break rule:</strong> When two nodes have equal priority, the one whose name comes first alphabetically is settled first.</li>
+      </ol>
+
+      <h3>Edge Cases</h3>
+      <ul>
+        <li>Cost ≤ 0 is rejected with a warning.</li>
+        <li>Disconnected nodes show ∞.</li>
+        <li>Ties are broken alphabetically (lower node name wins).</li>
+      </ul>
+
+      <h3>Verification</h3>
+      <p>A brute-force simple-path enumerator checks every path from source to each destination and confirms Dijkstra's output matches the true minimum. Badge shows PASS/FAIL.</p>
+    </div>
+  </details>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
